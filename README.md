@@ -293,3 +293,7 @@ python3 plots.py
 ## Data and privacy
 
 The leaderboard file also contains applicant names and schools. We stripped those on download, so the snapshots here hold only ranks and scores. Riddler data comes from [FiveThirtyEight](https://github.com/fivethirtyeight/data/tree/master/riddler-castles). We didn't submit test entries, decode leaderboard IDs or use the site's webhooks.
+
+## License
+
+The code and documentation are available under the [MIT License](LICENSE). This doesn't cover `data/`: the Riddler entries stay under FiveThirtyEight's terms, and the leaderboard scores come from the competition site.
