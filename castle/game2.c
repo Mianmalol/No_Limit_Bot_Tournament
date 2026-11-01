@@ -6,6 +6,8 @@
 //   game2 fp   <iters> <tables> <restarts> <out> [seed]    fictitious play archive
 //   game2 br   <field> <tables> <restarts> <top> [seed]    best responses to a field
 //   game2 eval <field> <candidates> <tables> [seed]        score candidates on a field
+//   game2 places <field> <candidates> <tables> [seed]      score plus odds of each place
+//   game2 screen <tables> <prefix> <field>...              every allocation on each field
 //
 // Field files have one "c1 c2 c3 c4 c5" per line.
 #include <pthread.h>
@@ -45,8 +47,9 @@ static inline uint64_t rnd(Rng *r) {
 }
 static inline int rint_(Rng *r, int n) { return (int)(rnd(r) % (uint64_t)n); }
 
-// Payout to player 0 at a table. Points are in 12ths so ties compare exactly.
-static inline double score(const Alloc *x, const Table *t) {
+// Player 0's rank at a table: how many beat them and how many tie (incl. self).
+// Points are in 12ths so ties compare exactly.
+static inline void rank_at(const Alloc *x, const Table *t, int *above_out, int *tied_out) {
     int pts[4] = {0, 0, 0, 0};
     for (int c = 0; c < C; c++) {
         int s[4] = {x->c[c], t->o[0].c[c], t->o[1].c[c], t->o[2].c[c]};
@@ -63,6 +66,13 @@ static inline double score(const Alloc *x, const Table *t) {
         above += pts[i] > pts[0];
         tied += pts[i] == pts[0];
     }
+    *above_out = above;
+    *tied_out = tied;
+}
+
+static inline double score(const Alloc *x, const Table *t) {
+    int above, tied;
+    rank_at(x, t, &above, &tied);
     return PAY[above][tied];
 }
 
@@ -280,6 +290,68 @@ static int cmd_eval(const char *field_path, const char *cand_path, int tables, u
     return 0;
 }
 
+static int cmd_places(const char *field_path, const char *cand_path, int tables, uint64_t seed) {
+    Alloc *field = malloc(sizeof(Alloc) * MAX_FIELD);
+    Alloc *cand = malloc(sizeof(Alloc) * MAX_FIELD);
+    int m = read_field(field_path, field, MAX_FIELD);
+    int n = read_field(cand_path, cand, MAX_FIELD);
+    Rng r = {seed};
+    Table *t = malloc(sizeof(Table) * tables);
+    make_tables(t, tables, field, m, &r);
+    for (int i = 0; i < n; i++) {
+        double p[4] = {0, 0, 0, 0};
+        for (int k = 0; k < tables; k++) {
+            int above, tied;
+            rank_at(&cand[i], &t[k], &above, &tied);
+            for (int q = above; q < above + tied; q++) p[q] += 1.0 / tied;
+        }
+        double s = 9 * p[0] + 4 * p[1] + 2 * p[2];
+        printf("%.4f %.4f %.4f %.4f %.4f  %d %d %d %d %d\n", s / tables, p[0] / tables,
+               p[1] / tables, p[2] / tables, p[3] / tables, cand[i].c[0], cand[i].c[1],
+               cand[i].c[2], cand[i].c[3], cand[i].c[4]);
+    }
+    return 0;
+}
+
+static int all_allocs(Alloc *out) {
+    int n = 0;
+    for (int a = 0; a <= N; a++)
+        for (int b = 0; a + b <= N; b++)
+            for (int c = 0; a + b + c <= N; c++)
+                for (int d = 0; a + b + c + d <= N; d++)
+                    out[n++] = (Alloc){{a, b, c, d, N - a - b - c - d}};
+    return n;
+}
+
+// Writes <prefix>.alloc (int8 n x 5) and <prefix>.scores (float n x fields).
+static int cmd_screen(int tables, const char *prefix, char **fields, int nf) {
+    int total = 4598126;
+    Alloc *x = malloc(sizeof(Alloc) * total);
+    int n = all_allocs(x);
+    char path[1024];
+    snprintf(path, sizeof path, "%s.alloc", prefix);
+    FILE *f = fopen(path, "wb");
+    fwrite(x, sizeof(Alloc), n, f);
+    fclose(f);
+    snprintf(path, sizeof path, "%s.scores", prefix);
+    f = fopen(path, "wb");
+    Alloc *field = malloc(sizeof(Alloc) * MAX_FIELD);
+    Table *t = malloc(sizeof(Table) * tables);
+    double *v = malloc(sizeof(double) * n);
+    float *row = malloc(sizeof(float) * n);
+    for (int k = 0; k < nf; k++) {
+        int m = read_field(fields[k], field, MAX_FIELD);
+        Rng r = {1000 + (uint64_t)k};
+        make_tables(t, tables, field, m, &r);
+        eval_all(x, n, t, tables, v);
+        for (int i = 0; i < n; i++) row[i] = (float)v[i];
+        fwrite(row, sizeof(float), n, f);
+        fprintf(stderr, "field %d/%d done\n", k + 1, nf);
+    }
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     init_pay();
     ZERO_UNAWARDED = getenv("ZERO_UNAWARDED") != NULL;
@@ -291,6 +363,10 @@ int main(int argc, char **argv) {
                       argc > 6 ? strtoull(argv[6], 0, 10) : 1);
     if (argc >= 5 && !strcmp(argv[1], "eval"))
         return cmd_eval(argv[2], argv[3], atoi(argv[4]), argc > 5 ? strtoull(argv[5], 0, 10) : 1);
+    if (argc >= 5 && !strcmp(argv[1], "places"))
+        return cmd_places(argv[2], argv[3], atoi(argv[4]), argc > 5 ? strtoull(argv[5], 0, 10) : 1);
+    if (argc >= 5 && !strcmp(argv[1], "screen"))
+        return cmd_screen(atoi(argv[2]), argv[3], argv + 4, argc - 4);
     fprintf(stderr, "usage: see header of game2.c\n");
     return 1;
 }
