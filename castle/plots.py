@@ -16,7 +16,7 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 
 from field import random_allocs, scenario
 from riddler import scores
-from scoring import game2
+from search import run
 from stress2 import EXE, REAL, V5, conc, mix, sharp_g1, sharp_g2
 
 OUT = Path("plots")
@@ -26,10 +26,12 @@ SIZE = 3000
 TABLES = 40000
 
 STRATEGIES = {
-    "Game 1 pick\n6,16,1,36,41": (6, 16, 1, 36, 41),
-    "Game 2 pick\n13,37,48,0,2": (13, 37, 48, 0, 2),
-    "Old Game 1 pick\n6,5,3,42,44": (6, 5, 3, 42, 44),
-    "Old Game 2 pick\n6,31,0,63,0": (6, 31, 0, 63, 0),
+    "Game 1 pick\n3,5,4,43,45": (3, 5, 4, 43, 45),
+    "Game 2 pick\n0,39,0,61,0": (0, 39, 0, 61, 0),
+    "Earlier Game 1\n6,16,1,36,41": (6, 16, 1, 36, 41),
+    "Earlier Game 2\n13,37,48,0,2": (13, 37, 48, 0, 2),
+    "Oldest Game 2\n6,31,0,63,0": (6, 31, 0, 63, 0),
+    "All on 1 & 5\n28,0,0,0,72": (28, 0, 0, 0, 72),
     "Castles 3 & 5\n0,0,39,0,61": (0, 0, 39, 0, 61),
     "Top two\n0,0,0,40,60": (0, 0, 0, 40, 60),
     "Top three\n0,0,33,33,34": (0, 0, 33, 33, 34),
@@ -165,9 +167,9 @@ def fig_matrix(g1, g2, cols1, cols2):
 
 def fig_sharpness(rng, p1, p2, d):
     shares = np.arange(0, 1.0, 0.1)
-    lines1 = {"Game 1 pick": (6, 16, 1, 36, 41), "Old Game 1 pick": (6, 5, 3, 42, 44),
+    lines1 = {"Game 1 pick": (3, 5, 4, 43, 45), "Earlier Game 1": (6, 16, 1, 36, 41),
               "Proportional": (7, 13, 20, 27, 33)}
-    lines2 = {"Game 2 pick": (13, 37, 48, 0, 2), "Old Game 2 pick": (6, 31, 0, 63, 0),
+    lines2 = {"Game 2 pick": (0, 39, 0, 61, 0), "Earlier Game 2": (13, 37, 48, 0, 2),
               "Top two": (0, 0, 0, 40, 60)}
     fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.6))
     fig.subplots_adjust(top=0.76, bottom=0.12, left=0.06, right=0.89, wspace=0.46)
@@ -206,22 +208,18 @@ def fig_sharpness(rng, p1, p2, d):
     save(fig, "4_score_vs_sharpness.png")
 
 
-def fig_finish(rng):
-    names = ["Game 2 pick\n13,37,48,0,2", "Old Game 2 pick\n6,31,0,63,0", "Castles 3 & 5\n0,0,39,0,61",
-             "Top two\n0,0,0,40,60", "Proportional\n7,13,20,27,33", "Even split\n20,20,20,20,20"]
+def fig_finish(rng, d):
+    names = ["Game 2 pick\n0,39,0,61,0", "Earlier Game 2\n13,37,48,0,2", "Oldest Game 2\n6,31,0,63,0",
+             "All on 1 & 5\n28,0,0,0,72", "Top two\n0,0,0,40,60", "Proportional\n7,13,20,27,33",
+             "Even split\n20,20,20,20,20"]
     field = mix(rng, [(0.2, lambda n: sharp_g2(rng, n))])
-    tables = field[rng.integers(len(field), size=(2500, 3))]
-    shares = np.zeros((len(names), 4))
-    for i, n in enumerate(names):
-        for t in tables:
-            pay = float(game2([STRATEGIES[n]] + [tuple(int(v) for v in o) for o in t])[0])
-            # A tied payout falls between places; credit the nearest one.
-            shares[i, np.argmin(np.abs(np.array([9, 4, 2, 0]) - pay))] += 1
-    shares /= len(tables)
-    fig, ax = plt.subplots(figsize=(11.5, 5.4))
+    x = np.array([STRATEGIES[n] for n in names])
+    lines = run("places", field, x, 200000, 9, d)
+    shares = np.array([[float(v) for v in line.split()[1:5]] for line in lines])
+    fig, ax = plt.subplots(figsize=(11.5, 6))
     fig.subplots_adjust(top=0.79, bottom=0.13, left=0.17, right=0.97)
     title(fig, "Game 2 pays for first place, so concentrated entries beat steady ones",
-          "Share of tables by finish, in the best-fit field (Riddler + 20% sharp). Tied results use the nearest place.")
+          "Share of tables by finish in the best-fit field (Riddler + 20% sharp). Ties are shared between the tied places.")
     left = np.zeros(len(names))
     y = np.arange(len(names))[::-1]
     for k, (label, colour) in enumerate(zip(("1st (9)", "2nd (4)", "3rd (2)", "4th (0)"),
@@ -239,6 +237,69 @@ def fig_finish(rng):
     ax.tick_params(length=0)
     ax.legend(frameon=False, ncol=4, loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=10)
     save(fig, "5_game2_finish_places.png")
+
+
+def fig_place_odds():
+    d = json.load(open("results/search/g2_final.json"))
+    names, r = d["names"], np.array(d["results"])
+    labels = {(0, 39, 0, 61, 0): "Game 2 pick\n0,39,0,61,0", (13, 37, 48, 0, 2): "Earlier\n13,37,48,0,2",
+              (6, 31, 0, 63, 0): "Oldest\n6,31,0,63,0", (28, 0, 0, 0, 72): "1 & 5\n28,0,0,0,72"}
+    idx = [d["finalists"].index(list(k)) for k in labels]
+    err = np.array([d["errors"][n] for n in names])
+    order = np.argsort(err)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 10.5), sharey=True)
+    fig.subplots_adjust(top=0.83, bottom=0.02, left=0.13, right=0.99, wspace=0.05)
+    title(fig, "Every strategy has regimes that break it, and no column wins every row",
+          "Game 2 score and exact place odds on fresh fields. Rows run from best to worst fit with the real leaderboard.")
+    cmap = LinearSegmentedColormap.from_list("seq", ["#f4f3ef", BLUE])
+    for ax, col, name, fmt, vmax in ((axes[0], 0, "Score (fair 3.75)", "{:.1f}", 9), (axes[1], 1, "Finish 1st", "{:.0%}", 1),
+                                     (axes[2], 4, "Finish last", "{:.0%}", 0.5)):
+        grid = r[order][:, idx, col]
+        ax.imshow(grid, cmap=cmap, vmin=0, vmax=vmax, aspect="auto")
+        ax.set_xticks(range(len(idx)), list(labels.values()), fontsize=9)
+        ax.tick_params(length=0, top=True, labeltop=True, bottom=False, labelbottom=False)
+        ax.set_yticks(range(len(names)), [names[i] for i in order], fontsize=10)
+        ax.grid(False)
+        ax.set_xlim(-.5, len(idx) - .5)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+        for i in range(grid.shape[0]):
+            for j in range(grid.shape[1]):
+                dark = grid[i, j] / vmax > 0.62
+                ax.text(j, i, fmt.format(grid[i, j]), ha="center", va="center", fontsize=10,
+                        color=SURFACE if dark else INK)
+        ax.text(-0.5, -1.55, name, fontweight="bold", fontsize=12)
+    save(fig, "7_place_odds_by_regime.png")
+
+
+def fig_spread():
+    d = json.load(open("results/search/g2_final.json"))
+    names, r = d["names"], np.array(d["results"])
+    w = np.exp(-np.array([d["errors"][n] for n in names]) / 0.15)
+    w /= w.sum()
+    show = [((0, 39, 0, 61, 0), "Game 2 pick 0,39,0,61,0"), ((28, 0, 0, 0, 72), "All on 1 & 5  28,0,0,0,72"),
+            ((6, 31, 0, 63, 0), "Oldest 6,31,0,63,0"), ((13, 37, 48, 0, 2), "Earlier 13,37,48,0,2"),
+            ((10, 4, 6, 0, 80), "Max worst case 10,4,6,0,80")]
+    fig, ax = plt.subplots(figsize=(12, 5.6))
+    fig.subplots_adjust(top=0.8, bottom=0.12, left=0.22, right=0.97)
+    title(fig, "The Game 2 pick has the best average, with no drop much below a fair share",
+          "Game 2 score in each of 21 regimes (dots). Bars mark the leaderboard-weighted average.")
+    y = np.arange(len(show))[::-1]
+    jitter_rng = np.random.default_rng(0)
+    for k, (alloc, _) in enumerate(show):
+        s = r[:, d["finalists"].index(list(alloc)), 0]
+        ax.scatter(s, y[k] + jitter_rng.uniform(-.14, .14, len(s)), s=46, color=BLUE, alpha=.65,
+                   edgecolor=SURFACE, linewidth=1, zorder=3, label="One regime" if k == 0 else None)
+        ax.plot([s @ w] * 2, [y[k] - .3, y[k] + .3], color=INK, lw=2.5, zorder=4,
+                label="Weighted average" if k == 0 else None)
+    ax.axvline(3.75, color=MUTED, ls="--", lw=1.2)
+    ax.text(3.72, -.42, "Fair share 3.75", ha="right", color=MUTED, fontsize=10)
+    ax.set_yticks(y, [n for _, n in show])
+    ax.set_xlabel("Game 2 score")
+    ax.grid(axis="y", visible=False)
+    ax.tick_params(length=0)
+    ax.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, fontsize=10)
+    save(fig, "8_score_spread_across_regimes.png")
 
 
 def fig_win_curves(rng):
@@ -280,8 +341,10 @@ def main():
         g2 = np.array([g2_eval(f, x, d) for f in r2.values()]).T
         fig_matrix(g1, g2, list(r1), list(r2))
         fig_sharpness(rng, p1, p2, d)
-    fig_finish(rng)
+        fig_finish(rng, d)
     fig_win_curves(rng)
+    fig_place_odds()
+    fig_spread()
     np.set_printoptions(precision=2, suppress=True, linewidth=120)
     print(g1)
     print(g2)
