@@ -1,0 +1,5 @@
+__pycache__/
+*.log
+game2
+results/
+.pytest_cache/
